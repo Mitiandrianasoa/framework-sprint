@@ -2,6 +2,8 @@ package com.sprint.servlet;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +18,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import com.sprint.annotation.Test;
 import com.sprint.model.ModelView;
 import com.sprint.util.AnnotationScanner;
+import com.sprint.util.PathPattern;
 
 /**
  * SPRINT 3 - Contrôleur frontal (Front Controller).
@@ -32,6 +35,8 @@ public class FrontServlet extends HttpServlet {
     private final Map<String, Method> routeMap = new HashMap<>();
     // Instance du contrôleur associée à chaque méthode (pour l'invocation).
     private final Map<Method, Object> controllerInstances = new HashMap<>();
+    // SPRINT 6 : motifs d'URL paramétrées (ex: "/etudiant/{id}").
+    private final Map<String, PathPattern> pathPatterns = new HashMap<>();
 
     @Override
     public void init() throws ServletException {
@@ -56,6 +61,13 @@ public class FrontServlet extends HttpServlet {
                         String url = test.value();
                         routeMap.put(url, method);
                         controllerInstances.put(method, controllerInstance);
+
+                        // SPRINT 6 : si l'URL contient un paramètre {..}, on
+                        // enregistre un motif pour la reconnaître à l'exécution.
+                        if (url.contains("{")) {
+                            pathPatterns.put(url, new PathPattern(url));
+                        }
+
                         System.out.println("Route enregistrée: " + url + " -> "
                                 + controllerClass.getSimpleName() + "." + method.getName());
                     }
@@ -87,7 +99,8 @@ public class FrontServlet extends HttpServlet {
             throws ServletException, IOException {
         String path = req.getRequestURI().substring(req.getContextPath().length());
 
-        Method method = routeMap.get(path);
+        // SPRINT 6 : la résolution accepte désormais les URL paramétrées.
+        Method method = trouverMethode(path);
         if (method == null) {
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
             resp.setContentType("text/plain;charset=UTF-8");
@@ -96,15 +109,100 @@ public class FrontServlet extends HttpServlet {
         }
 
         try {
-            // 1. Récupérer l'instance du contrôleur puis exécuter la méthode
+            // 1. Récupérer l'instance du contrôleur
             Object controller = controllerInstances.get(method);
-            Object result = method.invoke(controller);
 
-            // 2. Traiter la valeur de retour
+            // 2. Construire les arguments (valeurs des {param} de l'URL)
+            Object[] args = extraireArguments(method, path);
+
+            // 3. Exécuter la méthode
+            Object result = method.invoke(controller, args);
+
+            // 4. Traiter la valeur de retour
             traiterResultat(result, req, resp);
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'exécution de la route " + path, e);
         }
+    }
+
+    /**
+     * SPRINT 6 : retrouve la méthode pour une URL, d'abord par correspondance
+     * exacte, puis via les motifs paramétrés ("/etudiant/{id}").
+     */
+    private Method trouverMethode(String path) {
+        if (routeMap.containsKey(path)) {
+            return routeMap.get(path);
+        }
+        for (Map.Entry<String, PathPattern> entry : pathPatterns.entrySet()) {
+            if (entry.getValue().matches(path)) {
+                return routeMap.get(entry.getKey());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * SPRINT 6 : extrait les valeurs des paramètres d'URL et les associe aux
+     * paramètres de la méthode dont le NOM correspond (get(id) <- {id}).
+     */
+    private Object[] extraireArguments(Method method, String path) {
+        Parameter[] parameters = method.getParameters();
+        Object[] args = new Object[parameters.length];
+
+        Map<String, String> pathParams = extraireParametresChemin(path);
+
+        for (int i = 0; i < parameters.length; i++) {
+            Parameter param = parameters[i];
+            if (pathParams.containsKey(param.getName())) {
+                args[i] = convertToType(pathParams.get(param.getName()), param.getType());
+            } else {
+                args[i] = getDefaultValue(param.getType());
+            }
+        }
+        return args;
+    }
+
+    /**
+     * Retrouve le motif qui correspond à l'URL et en extrait les paramètres.
+     */
+    private Map<String, String> extraireParametresChemin(String path) {
+        for (PathPattern pattern : pathPatterns.values()) {
+            if (pattern.matches(path)) {
+                return pattern.extractParameters(path);
+            }
+        }
+        return Collections.emptyMap();
+    }
+
+    /**
+     * Convertit une valeur textuelle vers le type Java attendu par le paramètre.
+     */
+    private Object convertToType(String value, Class<?> targetType) {
+        if (value == null) {
+            return null;
+        }
+        if (targetType == String.class) return value;
+        if (targetType == Integer.class || targetType == int.class) return Integer.parseInt(value);
+        if (targetType == Long.class || targetType == long.class) return Long.parseLong(value);
+        if (targetType == Double.class || targetType == double.class) return Double.parseDouble(value);
+        if (targetType == Boolean.class || targetType == boolean.class) return Boolean.parseBoolean(value);
+        return value;
+    }
+
+    /**
+     * Valeur par défaut pour un paramètre non renseigné (évite les NullPointer
+     * sur les types primitifs).
+     */
+    private Object getDefaultValue(Class<?> type) {
+        if (type == int.class) return 0;
+        if (type == long.class) return 0L;
+        if (type == double.class) return 0.0;
+        if (type == float.class) return 0.0f;
+        if (type == boolean.class) return false;
+        if (type == byte.class) return (byte) 0;
+        if (type == short.class) return (short) 0;
+        if (type == char.class) return '\0';
+        return null;
     }
 
     /**
