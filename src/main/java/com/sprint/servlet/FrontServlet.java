@@ -27,6 +27,8 @@ import com.sprint.annotation.Test;
 import com.sprint.model.JsonResponse;
 import com.sprint.model.ModelView;
 import com.sprint.model.MultipartFile;
+import com.sprint.model.UserSession;
+import com.sprint.security.SecurityInterceptor;
 import com.sprint.util.AnnotationScanner;
 import com.sprint.util.EntityBinder;
 import com.sprint.util.MultipartRequestHandler;
@@ -168,13 +170,23 @@ public class FrontServlet extends HttpServlet {
             // 1. Récupérer l'instance du contrôleur
             Object controller = controllerInstances.get(method);
 
-            // 2. Construire les arguments (valeurs des {param} de l'URL + @RequestParam)
+            // 2. SPRINT 11-bis : vérification de sécurité (rôles / permissions)
+            Map<String, Object> session = SessionManager.getSession(req);
+            UserSession userSession = UserSession.fromSessionMap(session);
+            Object securityResult = SecurityInterceptor.checkSecurity(method, userSession, session);
+            if (securityResult != null) {
+                // Accès refusé : on traite directement le résultat de sécurité.
+                traiterResultat(securityResult, req, resp, method, controller);
+                return;
+            }
+
+            // 3. Construire les arguments (valeurs des {param} de l'URL + @RequestParam)
             Object[] args = extraireArguments(method, path, req);
 
-            // 3. Exécuter la méthode
+            // 4. Exécuter la méthode
             Object result = method.invoke(controller, args);
 
-            // 4. Traiter la valeur de retour
+            // 5. Traiter la valeur de retour
             traiterResultat(result, req, resp, method, controller);
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'exécution de la route " + path, e);
