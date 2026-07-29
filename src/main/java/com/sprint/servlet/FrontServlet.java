@@ -15,6 +15,8 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import com.sprint.annotation.Get;
+import com.sprint.annotation.Post;
 import com.sprint.annotation.RequestParam;
 import com.sprint.annotation.Test;
 import com.sprint.model.ModelView;
@@ -57,19 +59,23 @@ public class FrontServlet extends HttpServlet {
                 Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
 
                 for (Method method : controllerClass.getDeclaredMethods()) {
-                    Test test = method.getAnnotation(Test.class);
-                    if (test != null && !test.value().isEmpty()) {
-                        String url = test.value();
-                        routeMap.put(url, method);
+                    // SPRINT 7 : le verbe HTTP et l'URL proviennent de @Get, @Post ou @Test.
+                    String httpMethod = extractHttpMethod(method);
+                    String url = extractPath(method);
+
+                    if (url != null && !url.isEmpty()) {
+                        // La clé de routage inclut le verbe : "GET:/etudiant/{id}"
+                        String key = httpMethod + ":" + url;
+                        routeMap.put(key, method);
                         controllerInstances.put(method, controllerInstance);
 
                         // SPRINT 6 : si l'URL contient un paramètre {..}, on
                         // enregistre un motif pour la reconnaître à l'exécution.
                         if (url.contains("{")) {
-                            pathPatterns.put(url, new PathPattern(url));
+                            pathPatterns.put(key, new PathPattern(url));
                         }
 
-                        System.out.println("Route enregistrée: " + url + " -> "
+                        System.out.println("Route enregistrée: " + key + " -> "
                                 + controllerClass.getSimpleName() + "." + method.getName());
                     }
                 }
@@ -77,6 +83,27 @@ public class FrontServlet extends HttpServlet {
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'initialisation des routes", e);
         }
+    }
+
+    /**
+     * SPRINT 7 : détermine le verbe HTTP associé à une méthode selon son annotation.
+     * @Get -> GET, @Post -> POST, @Test -> GET (par défaut).
+     */
+    private String extractHttpMethod(Method method) {
+        if (method.isAnnotationPresent(Get.class)) return "GET";
+        if (method.isAnnotationPresent(Post.class)) return "POST";
+        if (method.isAnnotationPresent(Test.class)) return "GET";
+        return null;
+    }
+
+    /**
+     * SPRINT 7 : détermine l'URL associée à une méthode selon son annotation.
+     */
+    private String extractPath(Method method) {
+        if (method.isAnnotationPresent(Get.class)) return method.getAnnotation(Get.class).value();
+        if (method.isAnnotationPresent(Post.class)) return method.getAnnotation(Post.class).value();
+        if (method.isAnnotationPresent(Test.class)) return method.getAnnotation(Test.class).value();
+        return null;
     }
 
     @Override
@@ -100,8 +127,11 @@ public class FrontServlet extends HttpServlet {
             throws ServletException, IOException {
         String path = req.getRequestURI().substring(req.getContextPath().length());
 
-        // SPRINT 6 : la résolution accepte désormais les URL paramétrées.
-        Method method = trouverMethode(path);
+        // SPRINT 7 : on lit le vrai verbe HTTP de la requête (GET, POST, ...).
+        String httpMethod = req.getMethod();
+
+        // SPRINT 6 : URL paramétrées ; SPRINT 7 : filtrées par verbe HTTP.
+        Method method = trouverMethode(path, httpMethod);
         if (method == null) {
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
             resp.setContentType("text/plain;charset=UTF-8");
@@ -127,15 +157,21 @@ public class FrontServlet extends HttpServlet {
     }
 
     /**
-     * SPRINT 6 : retrouve la méthode pour une URL, d'abord par correspondance
-     * exacte, puis via les motifs paramétrés ("/etudiant/{id}").
+     * SPRINT 6 : retrouve la méthode pour une URL (exacte puis motifs paramétrés).
+     * SPRINT 7 : la recherche tient compte du verbe HTTP (clé "GET:/...").
      */
-    private Method trouverMethode(String path) {
-        if (routeMap.containsKey(path)) {
-            return routeMap.get(path);
+    private Method trouverMethode(String path, String httpMethod) {
+        String key = httpMethod + ":" + path;
+
+        // Correspondance exacte
+        if (routeMap.containsKey(key)) {
+            return routeMap.get(key);
         }
+
+        // Correspondance via un motif paramétré, pour le même verbe HTTP
+        String prefix = httpMethod + ":";
         for (Map.Entry<String, PathPattern> entry : pathPatterns.entrySet()) {
-            if (entry.getValue().matches(path)) {
+            if (entry.getKey().startsWith(prefix) && entry.getValue().matches(path)) {
                 return routeMap.get(entry.getKey());
             }
         }
