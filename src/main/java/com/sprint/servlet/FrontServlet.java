@@ -22,6 +22,7 @@ import com.sprint.annotation.Post;
 import com.sprint.annotation.RequestParam;
 import com.sprint.annotation.ResponseBody;
 import com.sprint.annotation.RestController;
+import com.sprint.annotation.Session;
 import com.sprint.annotation.Test;
 import com.sprint.model.JsonResponse;
 import com.sprint.model.ModelView;
@@ -30,6 +31,7 @@ import com.sprint.util.AnnotationScanner;
 import com.sprint.util.EntityBinder;
 import com.sprint.util.MultipartRequestHandler;
 import com.sprint.util.PathPattern;
+import com.sprint.util.SessionManager;
 
 /**
  * SPRINT 3 - Contrôleur frontal (Front Controller).
@@ -281,6 +283,15 @@ public class FrontServlet extends HttpServlet {
                 continue;
             }
 
+            // SPRINT 11 : injection de la session (Map) via @Session ou type Map.
+            if (param.isAnnotationPresent(Session.class) || type == Map.class) {
+                Session sessionAnnotation = param.getAnnotation(Session.class);
+                String sessionName = (sessionAnnotation != null) ? sessionAnnotation.value() : "default";
+                boolean create = (sessionAnnotation == null) || sessionAnnotation.create();
+                args[i] = SessionManager.getSession(req, sessionName, create);
+                continue;
+            }
+
             // SPRINT 6 : paramètre de chemin de même nom (get(id) <- {id})
             if (pathParams.containsKey(param.getName())) {
                 args[i] = convertToType(pathParams.get(param.getName()), type);
@@ -370,6 +381,9 @@ public class FrontServlet extends HttpServlet {
                     req.setAttribute(entry.getKey(), entry.getValue());
                 }
             }
+
+            // SPRINT 11 : exposer aussi les données de session à la vue.
+            SessionManager.copyToRequestAttributes(req);
 
             String viewPath = "/WEB-INF/views/" + modelView.getView() + ".jsp";
             RequestDispatcher dispatcher = req.getRequestDispatcher(viewPath);
