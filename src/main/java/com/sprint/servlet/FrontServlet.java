@@ -15,10 +15,14 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sprint.annotation.Get;
 import com.sprint.annotation.Post;
 import com.sprint.annotation.RequestParam;
+import com.sprint.annotation.ResponseBody;
+import com.sprint.annotation.RestController;
 import com.sprint.annotation.Test;
+import com.sprint.model.JsonResponse;
 import com.sprint.model.ModelView;
 import com.sprint.util.AnnotationScanner;
 import com.sprint.util.EntityBinder;
@@ -41,6 +45,9 @@ public class FrontServlet extends HttpServlet {
     private final Map<Method, Object> controllerInstances = new HashMap<>();
     // SPRINT 6 : motifs d'URL paramétrées (ex: "/etudiant/{id}").
     private final Map<String, PathPattern> pathPatterns = new HashMap<>();
+    // SPRINT 9 : mémorise si une classe de contrôleur est un @RestController.
+    private final Map<Class<?>, Boolean> restControllerCache = new HashMap<>();
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     public void init() throws ServletException {
@@ -59,12 +66,18 @@ public class FrontServlet extends HttpServlet {
             for (Class<?> controllerClass : controllerClasses) {
                 Object controllerInstance = controllerClass.getDeclaredConstructor().newInstance();
 
+                // SPRINT 9 : contrôleur REST ? préfixe d'URL éventuel.
+                boolean isRest = controllerClass.isAnnotationPresent(RestController.class);
+                restControllerCache.put(controllerClass, isRest);
+                String prefix = isRest ? controllerClass.getAnnotation(RestController.class).value() : "";
+
                 for (Method method : controllerClass.getDeclaredMethods()) {
                     // SPRINT 7 : le verbe HTTP et l'URL proviennent de @Get, @Post ou @Test.
                     String httpMethod = extractHttpMethod(method);
                     String url = extractPath(method);
 
                     if (url != null && !url.isEmpty()) {
+                        url = prefix + url; // SPRINT 9 : préfixe REST
                         // La clé de routage inclut le verbe : "GET:/etudiant/{id}"
                         String key = httpMethod + ":" + url;
                         routeMap.put(key, method);
@@ -134,9 +147,10 @@ public class FrontServlet extends HttpServlet {
         // SPRINT 6 : URL paramétrées ; SPRINT 7 : filtrées par verbe HTTP.
         Method method = trouverMethode(path, httpMethod);
         if (method == null) {
+            // SPRINT 9 : erreur 404 renvoyée au format JSON.
             resp.setStatus(HttpServletResponse.SC_NOT_FOUND);
-            resp.setContentType("text/plain;charset=UTF-8");
-            resp.getWriter().write("Route non trouvée: " + path);
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonResponse.notFound("Route non trouvée: " + path).toJson());
             return;
         }
 
@@ -151,7 +165,7 @@ public class FrontServlet extends HttpServlet {
             Object result = method.invoke(controller, args);
 
             // 4. Traiter la valeur de retour
-            traiterResultat(result, req, resp);
+            traiterResultat(result, req, resp, method, controller);
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'exécution de la route " + path, e);
         }
@@ -288,9 +302,18 @@ public class FrontServlet extends HttpServlet {
      * SPRINT 4  : retour String -> écrit (PRINT) directement dans la réponse.
      * SPRINT 4-bis : retour ModelView -> forward vers la page JSP correspondante.
      * SPRINT 5  : les données du ModelView (Map) sont transférées à la vue.
+     * SPRINT 9  : contrôleur REST / @ResponseBody / JsonResponse -> réponse JSON.
      */
-    private void traiterResultat(Object result, HttpServletRequest req, HttpServletResponse resp)
+    private void traiterResultat(Object result, HttpServletRequest req, HttpServletResponse resp,
+                                 Method method, Object controller)
             throws ServletException, IOException {
+
+        // SPRINT 9 : cas JSON prioritaire
+        if (result instanceof JsonResponse || estRetourJson(method, controller)) {
+            sendJsonResponse(result, resp);
+            return;
+        }
+
         if (result instanceof String) {
             resp.setContentType("text/plain;charset=UTF-8");
             resp.getWriter().write((String) result);
@@ -311,6 +334,37 @@ public class FrontServlet extends HttpServlet {
             String viewPath = "/WEB-INF/views/" + modelView.getView() + ".jsp";
             RequestDispatcher dispatcher = req.getRequestDispatcher(viewPath);
             dispatcher.forward(req, resp);
+        } else if (result != null) {
+            // SPRINT 9 : tout autre objet est sérialisé en JSON par défaut.
+            sendJsonResponse(result, resp);
+        }
+    }
+
+    /**
+     * SPRINT 9 : la réponse doit-elle être du JSON ?
+     * Vrai si le contrôleur est @RestController, si la méthode porte @ResponseBody,
+     * ou si elle retourne directement un JsonResponse.
+     */
+    private boolean estRetourJson(Method method, Object controller) {
+        boolean isRest = restControllerCache.getOrDefault(controller.getClass(), false);
+        boolean hasResponseBody = method.isAnnotationPresent(ResponseBody.class);
+        boolean returnsJson = method.getReturnType() == JsonResponse.class;
+        return isRest || hasResponseBody || returnsJson;
+    }
+
+    /**
+     * SPRINT 9 : écrit un résultat au format JSON dans la réponse.
+     */
+    private void sendJsonResponse(Object result, HttpServletResponse resp) throws IOException {
+        resp.setContentType("application/json;charset=UTF-8");
+        if (result instanceof JsonResponse) {
+            JsonResponse jr = (JsonResponse) result;
+            resp.setStatus(jr.getCode());
+            resp.getWriter().write(jr.toJson());
+        } else {
+            JsonResponse jr = JsonResponse.success(result);
+            resp.setStatus(200);
+            resp.getWriter().write(objectMapper.writeValueAsString(jr));
         }
     }
 }
