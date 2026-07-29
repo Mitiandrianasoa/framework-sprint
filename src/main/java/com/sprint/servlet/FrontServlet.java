@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
@@ -13,6 +14,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 import com.sprint.annotation.Test;
+import com.sprint.model.ModelView;
 import com.sprint.util.AnnotationScanner;
 
 /**
@@ -99,20 +101,26 @@ public class FrontServlet extends HttpServlet {
             Object result = method.invoke(controller);
 
             // 2. Traiter la valeur de retour
-            traiterResultat(result, resp);
+            traiterResultat(result, req, resp);
         } catch (Exception e) {
             throw new ServletException("Erreur lors de l'exécution de la route " + path, e);
         }
     }
 
     /**
-     * SPRINT 4 : gestion du résultat retourné par le contrôleur.
-     * Pour l'instant, on ne sait traiter que le type String.
+     * SPRINT 4 : retour String -> écrit directement dans la réponse.
+     * SPRINT 4-bis : retour ModelView -> forward vers la page JSP correspondante.
      */
-    private void traiterResultat(Object result, HttpServletResponse resp) throws IOException {
+    private void traiterResultat(Object result, HttpServletRequest req, HttpServletResponse resp)
+            throws ServletException, IOException {
         if (result instanceof String) {
             resp.setContentType("text/plain;charset=UTF-8");
             resp.getWriter().write((String) result);
+        } else if (result instanceof ModelView) {
+            ModelView modelView = (ModelView) result;
+            String viewPath = "/WEB-INF/views/" + modelView.getView() + ".jsp";
+            RequestDispatcher dispatcher = req.getRequestDispatcher(viewPath);
+            dispatcher.forward(req, resp);
         }
     }
 }
