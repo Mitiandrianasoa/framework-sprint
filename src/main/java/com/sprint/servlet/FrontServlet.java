@@ -97,8 +97,12 @@ public class FrontServlet extends HttpServlet {
 
                         // SPRINT 6 : si l'URL contient un paramètre {..}, on
                         // enregistre un motif pour la reconnaître à l'exécution.
-                        if (url.contains("{")) {
-                            pathPatterns.put(key, new PathPattern(url));
+                        // SPRINT 6-ter : on DÉTERMINE et on affiche les {} du motif.
+                        if (PathPattern.hasPathVariables(url)) {
+                            PathPattern pp = new PathPattern(url);
+                            pathPatterns.put(key, pp);
+                            System.out.println("   Paramètres d'URL déterminés: "
+                                    + pp.getParameterNames() + " (" + pp.getParameterCount() + ")");
                         }
 
                         System.out.println("Route enregistrée: " + key + " -> "
