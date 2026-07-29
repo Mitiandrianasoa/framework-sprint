@@ -10,6 +10,7 @@ import java.util.Map;
 
 import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.annotation.MultipartConfig;
 import jakarta.servlet.annotation.WebServlet;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -24,8 +25,10 @@ import com.sprint.annotation.RestController;
 import com.sprint.annotation.Test;
 import com.sprint.model.JsonResponse;
 import com.sprint.model.ModelView;
+import com.sprint.model.MultipartFile;
 import com.sprint.util.AnnotationScanner;
 import com.sprint.util.EntityBinder;
+import com.sprint.util.MultipartRequestHandler;
 import com.sprint.util.PathPattern;
 
 /**
@@ -37,6 +40,11 @@ import com.sprint.util.PathPattern;
  * de l'application.
  */
 @WebServlet("/")
+@MultipartConfig(
+    maxFileSize = 1024 * 1024 * 10,      // 10 Mo par fichier
+    maxRequestSize = 1024 * 1024 * 50,   // 50 Mo par requête
+    fileSizeThreshold = 1024 * 1024      // 1 Mo en mémoire avant écriture disque
+)
 public class FrontServlet extends HttpServlet {
 
     // Table de routage : URL -> méthode du contrôleur. Conservée dès l'init().
@@ -204,6 +212,19 @@ public class FrontServlet extends HttpServlet {
 
         Map<String, String> pathParams = extraireParametresChemin(path);
 
+        // SPRINT 10 : si la requête contient des fichiers, on les extrait une fois.
+        boolean isMultipart = MultipartRequestHandler.isMultipartRequest(req);
+        Map<String, MultipartFile> multipartFiles = new HashMap<>();
+        Map<String, String> multipartParams = new HashMap<>();
+        if (isMultipart) {
+            try {
+                multipartFiles = MultipartRequestHandler.extractMultipartFiles(req);
+                multipartParams = MultipartRequestHandler.extractMultipartParameters(req);
+            } catch (Exception e) {
+                System.err.println("Erreur extraction multipart: " + e.getMessage());
+            }
+        }
+
         for (int i = 0; i < parameters.length; i++) {
             Parameter param = parameters[i];
             Class<?> type = param.getType();
@@ -211,6 +232,17 @@ public class FrontServlet extends HttpServlet {
             // Injection directe des objets techniques
             if (type == HttpServletRequest.class) {
                 args[i] = req;
+                continue;
+            }
+
+            // SPRINT 10 : paramètre de type fichier -> on le récupère par son nom.
+            if (type == MultipartFile.class) {
+                String fileParam = param.getName();
+                if (param.isAnnotationPresent(RequestParam.class)) {
+                    RequestParam rp = param.getAnnotation(RequestParam.class);
+                    fileParam = rp.value().isEmpty() ? param.getName() : rp.value();
+                }
+                args[i] = multipartFiles.get(fileParam);
                 continue;
             }
 
@@ -231,9 +263,15 @@ public class FrontServlet extends HttpServlet {
                 RequestParam rp = param.getAnnotation(RequestParam.class);
                 String name = rp.value().isEmpty() ? param.getName() : rp.value();
 
-                String value = pathParams.containsKey(name)
-                        ? pathParams.get(name)
-                        : req.getParameter(name);
+                // SPRINT 10 : fallback multipart pour les valeurs textuelles.
+                String value;
+                if (pathParams.containsKey(name)) {
+                    value = pathParams.get(name);
+                } else if (isMultipart) {
+                    value = multipartParams.get(name);
+                } else {
+                    value = req.getParameter(name);
+                }
 
                 // Vérification de l'existence de l'argument
                 if (value == null && rp.required()) {
@@ -247,8 +285,10 @@ public class FrontServlet extends HttpServlet {
             if (pathParams.containsKey(param.getName())) {
                 args[i] = convertToType(pathParams.get(param.getName()), type);
             } else {
-                // sinon, on tente un paramètre de requête du même nom
-                String value = req.getParameter(param.getName());
+                // sinon, on tente un paramètre de requête du même nom (fallback multipart)
+                String value = isMultipart
+                        ? multipartParams.get(param.getName())
+                        : req.getParameter(param.getName());
                 args[i] = (value != null) ? convertToType(value, type) : getDefaultValue(type);
             }
         }
