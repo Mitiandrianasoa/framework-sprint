@@ -108,8 +108,9 @@ public class FrontServlet extends HttpServlet {
     }
 
     /**
-     * SPRINT 4 : retour String -> écrit directement dans la réponse.
+     * SPRINT 4  : retour String -> écrit (PRINT) directement dans la réponse.
      * SPRINT 4-bis : retour ModelView -> forward vers la page JSP correspondante.
+     * SPRINT 5  : les données du ModelView (Map) sont transférées à la vue.
      */
     private void traiterResultat(Object result, HttpServletRequest req, HttpServletResponse resp)
             throws ServletException, IOException {
@@ -118,6 +119,15 @@ public class FrontServlet extends HttpServlet {
             resp.getWriter().write((String) result);
         } else if (result instanceof ModelView) {
             ModelView modelView = (ModelView) result;
+
+            // Transférer chaque donnée du ModelView vers les attributs de la requête
+            // pour qu'elle soit accessible dans la JSP.
+            if (modelView.getData() != null) {
+                for (Map.Entry<String, Object> entry : modelView.getData().entrySet()) {
+                    req.setAttribute(entry.getKey(), entry.getValue());
+                }
+            }
+
             String viewPath = "/WEB-INF/views/" + modelView.getView() + ".jsp";
             RequestDispatcher dispatcher = req.getRequestDispatcher(viewPath);
             dispatcher.forward(req, resp);
