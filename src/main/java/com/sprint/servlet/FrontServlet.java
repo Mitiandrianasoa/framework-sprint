@@ -77,8 +77,9 @@ public class FrontServlet extends HttpServlet {
     }
 
     /**
-     * SPRINT 3 : on retrouve la méthode associée à l'URL demandée.
-     * (L'exécution de la méthode et la gestion du retour arrivent au sprint 4.)
+     * SPRINT 4 : on exécute la méthode associée à l'URL, puis on récupère sa
+     * valeur de retour. Si c'est une chaîne de caractères (String), on l'écrit
+     * directement dans la réponse.
      */
     private void traiterRequete(HttpServletRequest req, HttpServletResponse resp)
             throws ServletException, IOException {
@@ -92,7 +93,26 @@ public class FrontServlet extends HttpServlet {
             return;
         }
 
-        resp.setContentType("text/plain;charset=UTF-8");
-        resp.getWriter().write("Route trouvée -> " + method.getName());
+        try {
+            // 1. Récupérer l'instance du contrôleur puis exécuter la méthode
+            Object controller = controllerInstances.get(method);
+            Object result = method.invoke(controller);
+
+            // 2. Traiter la valeur de retour
+            traiterResultat(result, resp);
+        } catch (Exception e) {
+            throw new ServletException("Erreur lors de l'exécution de la route " + path, e);
+        }
+    }
+
+    /**
+     * SPRINT 4 : gestion du résultat retourné par le contrôleur.
+     * Pour l'instant, on ne sait traiter que le type String.
+     */
+    private void traiterResultat(Object result, HttpServletResponse resp) throws IOException {
+        if (result instanceof String) {
+            resp.setContentType("text/plain;charset=UTF-8");
+            resp.getWriter().write((String) result);
+        }
     }
 }
