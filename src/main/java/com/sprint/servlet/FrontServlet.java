@@ -21,6 +21,7 @@ import com.sprint.annotation.RequestParam;
 import com.sprint.annotation.Test;
 import com.sprint.model.ModelView;
 import com.sprint.util.AnnotationScanner;
+import com.sprint.util.EntityBinder;
 import com.sprint.util.PathPattern;
 
 /**
@@ -199,6 +200,18 @@ public class FrontServlet extends HttpServlet {
                 continue;
             }
 
+            // SPRINT 8 : si le paramètre est un objet métier (entité), on le
+            // construit en liant les champs aux paramètres de la requête.
+            if (EntityBinder.isEntity(type)) {
+                try {
+                    args[i] = EntityBinder.bindEntity(req, type);
+                } catch (Exception e) {
+                    throw new RuntimeException("Erreur de binding de l'entité "
+                            + type.getSimpleName(), e);
+                }
+                continue;
+            }
+
             // SPRINT 6-bis : paramètre annoté @RequestParam
             if (param.isAnnotationPresent(RequestParam.class)) {
                 RequestParam rp = param.getAnnotation(RequestParam.class);
@@ -283,6 +296,9 @@ public class FrontServlet extends HttpServlet {
             resp.getWriter().write((String) result);
         } else if (result instanceof ModelView) {
             ModelView modelView = (ModelView) result;
+
+            // SPRINT 8 : exposer le type de données détecté (string / map / ...)
+            req.setAttribute("dataType", modelView.getDataType());
 
             // Transférer chaque donnée du ModelView vers les attributs de la requête
             // pour qu'elle soit accessible dans la JSP.
