@@ -1,17 +1,21 @@
 package com.sprint.util;
 
+import com.sprint.model.MultipartFile;
 import jakarta.servlet.http.HttpServletRequest;
 import java.lang.reflect.Field;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
- * SPRINT 8 - Binding automatique d'un objet (entité) depuis la requête.
+ * SPRINT 8  - Binding automatique d'un objet (entité) depuis la requête.
+ * SPRINT 10 - Prise en charge des champs de type MultipartFile (fichiers).
  *
  * Traitement des données envoyées :
  *   - si le paramètre attendu est un type simple (String, int...), on convertit
  *     directement la valeur ;
  *   - si c'est un objet (une "entité" du package model), on crée une instance et
- *     on remplit ses champs à partir des paramètres de la requête portant le même nom.
+ *     on remplit ses champs à partir des paramètres de la requête portant le même nom ;
+ *   - si un champ est un MultipartFile, on y injecte le fichier uploadé.
  */
 public class EntityBinder {
 
@@ -23,17 +27,40 @@ public class EntityBinder {
 
         Object entity = entityClass.getDeclaredConstructor().newInstance();
 
-        // Récupérer les paramètres (nom -> valeur) de la requête
-        Map<String, String[]> paramMap = request.getParameterMap();
+        boolean isMultipart = MultipartRequestHandler.isMultipartRequest(request);
+
+        // Récupérer les paramètres textuels (nom -> valeur), multipart ou non.
+        Map<String, String> parameters;
+        if (isMultipart) {
+            parameters = MultipartRequestHandler.extractMultipartParameters(request);
+        } else {
+            parameters = new HashMap<>();
+            for (Map.Entry<String, String[]> entry : request.getParameterMap().entrySet()) {
+                if (entry.getValue() != null && entry.getValue().length > 0) {
+                    parameters.put(entry.getKey(), entry.getValue()[0]);
+                }
+            }
+        }
 
         for (Field field : entityClass.getDeclaredFields()) {
             field.setAccessible(true); // autoriser l'accès aux champs privés
 
-            String[] values = paramMap.get(field.getName());
-            if (values != null && values.length > 0 && !values[0].isEmpty()) {
+            // SPRINT 10 : champ fichier
+            if (field.getType() == MultipartFile.class) {
+                if (isMultipart) {
+                    MultipartFile file = MultipartRequestHandler.getMultipartFile(request, field.getName());
+                    if (file != null) {
+                        field.set(entity, file);
+                    }
+                }
+                continue;
+            }
+
+            // Champ texte classique
+            String value = parameters.get(field.getName());
+            if (value != null && !value.isEmpty()) {
                 try {
-                    Object converted = convertValue(values[0], field.getType());
-                    field.set(entity, converted);
+                    field.set(entity, convertValue(value, field.getType()));
                 } catch (Exception e) {
                     System.err.println("Erreur binding champ " + field.getName()
                             + ": " + e.getMessage());
@@ -71,7 +98,9 @@ public class EntityBinder {
         if (packageName.contains("entity") || packageName.contains("model")) {
             String simpleName = clazz.getSimpleName();
             // Exclure les classes utilitaires du framework
-            return !simpleName.equals("ModelView");
+            return !simpleName.equals("ModelView")
+                    && !simpleName.equals("JsonResponse")
+                    && !simpleName.equals("MultipartFile");
         }
         return false;
     }
