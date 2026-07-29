@@ -15,6 +15,7 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import com.sprint.annotation.RequestParam;
 import com.sprint.annotation.Test;
 import com.sprint.model.ModelView;
 import com.sprint.util.AnnotationScanner;
@@ -112,8 +113,8 @@ public class FrontServlet extends HttpServlet {
             // 1. Récupérer l'instance du contrôleur
             Object controller = controllerInstances.get(method);
 
-            // 2. Construire les arguments (valeurs des {param} de l'URL)
-            Object[] args = extraireArguments(method, path);
+            // 2. Construire les arguments (valeurs des {param} de l'URL + @RequestParam)
+            Object[] args = extraireArguments(method, path, req);
 
             // 3. Exécuter la méthode
             Object result = method.invoke(controller, args);
@@ -142,10 +143,11 @@ public class FrontServlet extends HttpServlet {
     }
 
     /**
-     * SPRINT 6 : extrait les valeurs des paramètres d'URL et les associe aux
-     * paramètres de la méthode dont le NOM correspond (get(id) <- {id}).
+     * SPRINT 6 : associe les {param} de l'URL aux paramètres de même nom.
+     * SPRINT 6-bis : gère l'annotation @RequestParam (nom explicite + existence
+     * obligatoire) et l'injection de HttpServletRequest/Response.
      */
-    private Object[] extraireArguments(Method method, String path) {
+    private Object[] extraireArguments(Method method, String path, HttpServletRequest req) {
         Parameter[] parameters = method.getParameters();
         Object[] args = new Object[parameters.length];
 
@@ -153,10 +155,38 @@ public class FrontServlet extends HttpServlet {
 
         for (int i = 0; i < parameters.length; i++) {
             Parameter param = parameters[i];
+            Class<?> type = param.getType();
+
+            // Injection directe des objets techniques
+            if (type == HttpServletRequest.class) {
+                args[i] = req;
+                continue;
+            }
+
+            // SPRINT 6-bis : paramètre annoté @RequestParam
+            if (param.isAnnotationPresent(RequestParam.class)) {
+                RequestParam rp = param.getAnnotation(RequestParam.class);
+                String name = rp.value().isEmpty() ? param.getName() : rp.value();
+
+                String value = pathParams.containsKey(name)
+                        ? pathParams.get(name)
+                        : req.getParameter(name);
+
+                // Vérification de l'existence de l'argument
+                if (value == null && rp.required()) {
+                    throw new IllegalArgumentException("Paramètre requis manquant: " + name);
+                }
+                args[i] = convertToType(value, type);
+                continue;
+            }
+
+            // SPRINT 6 : paramètre de chemin de même nom (get(id) <- {id})
             if (pathParams.containsKey(param.getName())) {
-                args[i] = convertToType(pathParams.get(param.getName()), param.getType());
+                args[i] = convertToType(pathParams.get(param.getName()), type);
             } else {
-                args[i] = getDefaultValue(param.getType());
+                // sinon, on tente un paramètre de requête du même nom
+                String value = req.getParameter(param.getName());
+                args[i] = (value != null) ? convertToType(value, type) : getDefaultValue(type);
             }
         }
         return args;
